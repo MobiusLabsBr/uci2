@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 #define UCI2_VERSION_MAJOR 2
-#define UCI2_VERSION_MINOR 0
+#define UCI2_VERSION_MINOR 1
 #define UCI2_VERSION_PATCH 0
 
 typedef struct ast_s uci2_ast_t;
@@ -52,6 +52,9 @@ uci2_error_e uci2_config_remove(const char *config);
 uci2_error_e uci2_ast_create(uci2_ast_t **out);
 uci2_error_e uci2_ast_sync(uci2_ast_t *uci2_ast, const char *config);
 void uci2_ast_destroy(uci2_ast_t **uci2_ast);
+// Free the memory of all nodes removed with uci2_node_remove().
+// Pointers to removed nodes (and their children) become invalid.
+void uci2_ast_compact(uci2_ast_t *uci2_ast);
 
 uci2_error_e uci2_node_get(uci2_ast_t *uci2_ast, const char *section, const char *option, uci2_node_t **out);
 uci2_error_e uci2_node_section_add(uci2_ast_t *uci2_ast, uci2_node_t *parent, const char *type, const char *name, uci2_node_t **out);

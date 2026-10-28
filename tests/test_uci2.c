@@ -5,6 +5,8 @@
 #include <setjmp.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
+#include <sys/stat.h>
 
 #include <cmocka.h>
 
@@ -51,6 +53,13 @@ static void test_uci2_ast_create(void **state);
 static void test_uci2_config_remove(void **state);
 static void test_uci2_node_iterator(void **state);
 static void test_uci2_config_firewall(void **state);
+static void test_uci2_value_escaping(void **state);
+static void test_uci2_invalid_name(void **state);
+static void test_uci2_ast_sync_file(void **state);
+static void test_uci2_ast_compact(void **state);
+static void test_uci2_section_type_set_single(void **state);
+static void test_uci2_node_get_after_remove(void **state);
+static void test_uci2_config_parse_syntax(void **state);
 
 int main(void)
 {
@@ -81,6 +90,13 @@ int main(void)
 		cmocka_unit_test_setup_teardown(test_uci2_config_remove, setup, teardown),
 		cmocka_unit_test_setup_teardown(test_uci2_node_iterator, setup, teardown),
 		cmocka_unit_test_setup_teardown(test_uci2_config_firewall, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_value_escaping, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_invalid_name, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_ast_sync_file, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_ast_compact, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_section_type_set_single, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_node_get_after_remove, setup, teardown),
+		cmocka_unit_test_setup_teardown(test_uci2_config_parse_syntax, setup, teardown),
 	};
 
 	return cmocka_run_group_tests(tests, NULL, NULL);
@@ -506,12 +522,9 @@ static void test_uci2_node_list_add(void **state)
 		assert_string_equal(section_name, section_name_match[index]);
 
 		if (strcmp(section_name, "ntp") == 0) {
+			// the re-added "server" list has no elements, so it is not written
 			error = uci2_node_get(uci2_ast, section_name, "server", &list_node);
-			assert_int_equal(error, 0);
-
-			error = uci2_node_list_name_get(list_node, &list_name);
-			assert_int_equal(error, UE_NONE);
-			assert_string_equal(list_name, "server");
+			assert_int_equal(error, UE_NODE_NOT_FOUND);
 		}
 
 		index++;
@@ -623,12 +636,9 @@ static void test_uci2_node_list_element_add(void **state)
 
 	uci2_node_iterator_destroy(&iterator);
 
+	// all elements of "server" were removed, so the list is not written
 	error = uci2_node_get(uci2_ast, "ntp", "server", &list_node);
-	assert_int_equal(error, UE_NONE);
-
-	error = uci2_node_list_name_get(list_node, &list_name);
-	assert_int_equal(error, UE_NONE);
-	assert_string_equal(list_name, "server");
+	assert_int_equal(error, UE_NODE_NOT_FOUND);
 
 	uci2_ast_destroy(&uci2_ast);
 }
@@ -2339,4 +2349,486 @@ static void test_uci2_config_firewall(void **state)
 	uci2_node_iterator_destroy(&section_iterator);
 
 	uci2_ast_destroy(&uci2_ast);
+}
+
+static void test_uci2_value_escaping(void **state)
+{
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	uci2_node_t *root_node = NULL;
+	uci2_node_t *section_node = NULL;
+	uci2_node_t *node = NULL;
+	const char *value = NULL;
+	char name[16] = {0};
+	FILE *file = NULL;
+	const char *values[] = {
+		"it's",
+		"a\"b",
+		"back\\slash",
+		"tab\there",
+		"multi\nline",
+		"'''",
+		"",
+	};
+
+	error = uci2_ast_create(&uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, NULL, NULL, &root_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "test_type", "test_name", &section_node);
+	assert_int_equal(error, UE_NONE);
+
+	for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+		snprintf(name, sizeof(name), "option_%zu", i);
+		error = uci2_node_option_add(uci2_ast, section_node, name, values[i], &node);
+		assert_int_equal(error, UE_NONE);
+	}
+
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "test_config_escaping");
+	assert_int_equal(error, UE_NONE);
+
+	uci2_ast_destroy(&uci2_ast);
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_escaping", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+		snprintf(name, sizeof(name), "option_%zu", i);
+		error = uci2_node_get(uci2_ast, "test_name", name, &node);
+		if (values[i][0] == '\0') {
+			// like libuci, an empty value means the option is not set, so it is not written
+			assert_int_equal(error, UE_NODE_NOT_FOUND);
+			continue;
+		}
+
+		assert_int_equal(error, UE_NONE);
+
+		error = uci2_node_option_value_get(node, &value);
+		assert_int_equal(error, UE_NONE);
+		assert_string_equal(value, values[i]);
+	}
+
+	uci2_ast_destroy(&uci2_ast);
+
+	// values escaped by libuci
+	file = fopen(CONFIG_DIRECTORY_PATH_TMP "test_config_escaping", "w");
+	assert_ptr_not_equal(file, NULL);
+	fputs("config test_type 'test_name'\n"
+		  "\toption single 'it'\\''s'\n"
+		  "\toption double \"a\\\"b\"\n"
+		  "\toption unquoted a\\ b\n",
+		  file);
+	fclose(file);
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_escaping", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, "test_name", "single", &node);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_option_value_get(node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "it's");
+
+	error = uci2_node_get(uci2_ast, "test_name", "double", &node);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_option_value_get(node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "a\"b");
+
+	error = uci2_node_get(uci2_ast, "test_name", "unquoted", &node);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_option_value_get(node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "a b");
+
+	uci2_ast_destroy(&uci2_ast);
+}
+
+static void test_uci2_invalid_name(void **state)
+{
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	uci2_node_t *root_node = NULL;
+	uci2_node_t *section_node = NULL;
+	uci2_node_t *node = NULL;
+	FILE *file = NULL;
+
+	error = uci2_ast_create(&uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, NULL, NULL, &root_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "test type", NULL, &section_node);
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "test_type", "test'name", &section_node);
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "test.type", "test_name", &section_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_name_set(section_node, "@test");
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	error = uci2_node_option_add(uci2_ast, section_node, "", "value", &node);
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	error = uci2_node_list_add(uci2_ast, section_node, "a b", &node);
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	error = uci2_node_option_add(uci2_ast, section_node, "test_option", "value", &node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_option_name_set(node, "test-option");
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	uci2_ast_destroy(&uci2_ast);
+
+	// a parsed invalid name can't be written, and the file is left untouched
+	file = fopen(CONFIG_DIRECTORY_PATH_TMP "test_config_invalid_name", "w");
+	assert_ptr_not_equal(file, NULL);
+	fputs("config test_type 'test_name'\n\toption 'test option' 'value'\n", file);
+	fclose(file);
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_invalid_name", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "test_config_invalid_name");
+	assert_int_equal(error, UE_INVALID_ARGUMENT);
+
+	uci2_ast_destroy(&uci2_ast);
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_invalid_name", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, "test_name", "test option", &node);
+	assert_int_equal(error, UE_NONE);
+
+	uci2_ast_destroy(&uci2_ast);
+}
+
+static void test_uci2_ast_sync_file(void **state)
+{
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	struct stat stat_buffer = {0};
+
+	error = uci2_ast_create(&uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	// new files are created with mode 0600, like libuci does
+	umask(022);
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "test_config_new");
+	assert_int_equal(error, UE_NONE);
+	assert_int_equal(stat(CONFIG_DIRECTORY_PATH_TMP "test_config_new", &stat_buffer), 0);
+	assert_int_equal(stat_buffer.st_mode & 07777, 0600);
+
+	// existing files keep their mode
+	assert_int_equal(chmod(CONFIG_DIRECTORY_PATH_TMP "test_config_correct", 0640), 0);
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "test_config_correct");
+	assert_int_equal(error, UE_NONE);
+	assert_int_equal(stat(CONFIG_DIRECTORY_PATH_TMP "test_config_correct", &stat_buffer), 0);
+	assert_int_equal(stat_buffer.st_mode & 07777, 0640);
+
+	// a failed save does not leave a file behind
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "missing/test_config");
+	assert_int_equal(error, UE_FILE_IO);
+	assert_int_not_equal(stat(CONFIG_DIRECTORY_PATH_TMP "missing/test_config", &stat_buffer), 0);
+
+	uci2_ast_destroy(&uci2_ast);
+}
+
+static void test_uci2_ast_compact(void **state)
+{
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	uci2_node_t *root_node = NULL;
+	uci2_node_t *section_node = NULL;
+	uci2_node_t *list_node = NULL;
+	uci2_node_t *node = NULL;
+	size_t pool_size = 0;
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_correct", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, NULL, NULL, &root_node);
+	assert_int_equal(error, UE_NONE);
+
+	uci2_ast_compact(uci2_ast);
+	pool_size = uci2_ast->pool->children_number;
+
+	for (int i = 0; i < 100; i++) {
+		error = uci2_node_section_add(uci2_ast, root_node, "system", "test_name", &section_node);
+		assert_int_equal(error, UE_NONE);
+
+		error = uci2_node_list_add(uci2_ast, section_node, "test_list", &list_node);
+		assert_int_equal(error, UE_NONE);
+
+		error = uci2_node_list_element_add(uci2_ast, list_node, "test_value", &node);
+		assert_int_equal(error, UE_NONE);
+
+		uci2_node_remove(section_node);
+		uci2_ast_compact(uci2_ast);
+	}
+
+	assert_int_equal(uci2_ast->pool->children_number, pool_size);
+
+	// remaining nodes are still usable
+	error = uci2_node_get(uci2_ast, "@system[0]", NULL, &section_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, "ntp", "server", &node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "test_config_correct");
+	assert_int_equal(error, UE_NONE);
+
+	uci2_ast_destroy(&uci2_ast);
+}
+
+static void test_uci2_section_type_set_single(void **state)
+{
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	uci2_node_t *root_node = NULL;
+	uci2_node_t *lan_node = NULL;
+	uci2_node_t *wan_node = NULL;
+	uci2_node_t *unnamed_node = NULL;
+	uci2_node_t *node = NULL;
+	const char *value = NULL;
+
+	error = uci2_ast_create(&uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, NULL, NULL, &root_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "interface", "lan", &lan_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "interface", "wan", &wan_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "interface", NULL, &unnamed_node);
+	assert_int_equal(error, UE_NONE);
+
+	// like libuci, only the type of this section changes
+	error = uci2_node_section_type_set(lan_node, "device");
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_type_get(lan_node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "device");
+
+	error = uci2_node_section_type_get(wan_node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "interface");
+
+	// moving into an existing type, and setting the same type again
+	error = uci2_node_section_type_set(wan_node, "device");
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_type_set(wan_node, "device");
+	assert_int_equal(error, UE_NONE);
+
+	// unnamed sections get a name of their new type
+	error = uci2_node_section_type_set(unnamed_node, "switch.vlan");
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_name_get(unnamed_node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "@switch.vlan[0]");
+
+	error = uci2_ast_sync(uci2_ast, CONFIG_DIRECTORY_PATH_TMP "test_config_type_set");
+	assert_int_equal(error, UE_NONE);
+
+	uci2_ast_destroy(&uci2_ast);
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_type_set", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, "lan", NULL, &node);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_section_type_get(node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "device");
+
+	error = uci2_node_get(uci2_ast, "wan", NULL, &node);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_section_type_get(node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "device");
+
+	error = uci2_node_get(uci2_ast, "@switch.vlan[0]", NULL, &node);
+	assert_int_equal(error, UE_NONE);
+
+	uci2_ast_destroy(&uci2_ast);
+}
+
+static void test_uci2_node_get_after_remove(void **state)
+{
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	uci2_node_t *root_node = NULL;
+	uci2_node_t *section_node = NULL;
+	uci2_node_t *node = NULL;
+	const char *value = NULL;
+
+	error = uci2_ast_create(&uci2_ast);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, NULL, NULL, &root_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "interface", "wan", &section_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_option_add(uci2_ast, section_node, "proto", "dhcp", &node);
+	assert_int_equal(error, UE_NONE);
+	uci2_node_remove(node);
+
+	error = uci2_node_option_add(uci2_ast, section_node, "proto", "static", &node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, "wan", "proto", &node);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_option_value_get(node, &value);
+	assert_int_equal(error, UE_NONE);
+	assert_string_equal(value, "static");
+
+	uci2_node_remove(section_node);
+
+	error = uci2_node_section_add(uci2_ast, root_node, "device", "wan", &section_node);
+	assert_int_equal(error, UE_NONE);
+
+	error = uci2_node_get(uci2_ast, "wan", NULL, &node);
+	assert_int_equal(error, UE_NONE);
+	assert_ptr_equal(node, section_node);
+
+	uci2_ast_destroy(&uci2_ast);
+}
+
+// expected results follow libuci's parser (file.c: parse_str, parse_backslash, uci_parse_line)
+static void test_uci2_config_parse_syntax(void **state)
+{
+	static const char missing[] = "<missing>";
+	uci2_error_e error = 0;
+	uci2_ast_t *uci2_ast = NULL;
+	uci2_node_t *node = NULL;
+	const char *value = NULL;
+	uci2_node_type_e node_type = UNT_ROOT;
+	FILE *file = NULL;
+	struct {
+		const char *content;
+		const char *section;
+		const char *option;
+		const char *value; // NULL: parsing fails, missing: the option doesn't exist
+	} cases[] = {
+		// '#' starts a comment unless quoted or escaped
+		{"config t 's'\n\toption a foo#bar\n", "s", "a", "foo"},
+		{"config t 's'\n\toption a 'x'#comment\n", "s", "a", "x"},
+		{"config t 's' # comment\n\toption a 'x#y'\n", "s", "a", "x#y"},
+		{"config t 's'\n\toption a x\\#y\n", "s", "a", "x#y"},
+		// ';' separates statements unless quoted
+		{"config t 's'; option a 'b'\n", "s", "a", "b"},
+		{"config t 's'\n\toption a b; option c d\n", "s", "c", "d"},
+		{"config t 's'\n\toption a 'x;y'\n", "s", "a", "x;y"},
+		{"config t 's'\n\toption a x;y\n", "s", "a", NULL},
+		// a backslash at the end of a line continues the value
+		{"config t 's'\n\toption a ab\\\ncd\n", "s", "a", "abcd"},
+		{"config t 's'\n\toption a \"ab\\\n  cd\"\n", "s", "a", "ab  cd"},
+		{"config t 's'\n\toption a ab\\\r\ncd\n", "s", "a", "abcd"},
+		// single quoted values may span lines
+		{"config t 's'\n\toption a 'ab\ncd'\n", "s", "a", "ab\ncd"},
+		// CRLF line endings
+		{"config t 's'\r\n\toption a 'b'\r\n", "s", "a", "b"},
+		{"config t 's'\r\n\toption a b\r\n", "s", "a", "b"},
+		// keywords are only keywords at the start of a statement
+		{"config t 's'\n\toption proto list\n", "s", "proto", "list"},
+		{"config t 's'\n\toption config option\n", "s", "config", "option"},
+		{"config t 's'\n\toption a b option c d\n", "s", "a", NULL},
+		{"config t 's'\n\toptionx a b\n", "s", "a", NULL},
+		// keywords can be abbreviated to their first letter
+		{"c t 's'\n\to a 'b'\n", "s", "a", "b"},
+		{"c t 's'\n\tl a 'b'\n", "s", "a", "b"},
+		// a backslash at the end of the file is dropped
+		{"config t 's'\n\toption a ab\\", "s", "a", "ab"},
+		// options and lists are applied in order
+		{"config t 's'\n\toption a '1'\n\toption a '2'\n", "s", "a", "2"},
+		{"config t 's'\n\toption a '1'\n\tlist a '2'\n", "s", "a", "1"},
+		{"config t 's'\n\tlist a '1'\n\toption a '2'\n", "s", "a", "2"},
+		// an empty or missing value removes the option, a list gets an empty element
+		{"config t 's'\n\toption a '1'\n\toption a ''\n", "s", "a", missing},
+		{"config t 's'\n\toption a\n", "s", "a", missing},
+		{"config t 's'\n\toption a # comment\n", "s", "a", missing},
+		{"config t 's'\n\tlist a\n", "s", "a", ""},
+		// sections with the same name are merged, but can't have different types
+		{"config t 's'\n\toption a '1'\nconfig t 's'\n\toption b '2'\n", "s", "a", "1"},
+		{"config t 's'\n\toption a '1'\nconfig t 's'\n\toption b '2'\n", "s", "b", "2"},
+		{"config t 's'\nconfig u 's'\n", "s", "a", NULL},
+		// an empty section name means unnamed
+		{"config t ''\n\toption a 'b'\n", "@t[0]", "a", "b"},
+	};
+
+	// a file with only comments is an empty package
+	file = fopen(CONFIG_DIRECTORY_PATH_TMP "test_config_syntax", "w");
+	assert_ptr_not_equal(file, NULL);
+	fputs("# comment\n  # comment\n", file);
+	fclose(file);
+
+	error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_syntax", &uci2_ast);
+	assert_int_equal(error, UE_NONE);
+	error = uci2_node_get(uci2_ast, NULL, NULL, &node);
+	assert_int_equal(error, UE_NONE);
+	uci2_ast_destroy(&uci2_ast);
+
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		file = fopen(CONFIG_DIRECTORY_PATH_TMP "test_config_syntax", "w");
+		assert_ptr_not_equal(file, NULL);
+		fputs(cases[i].content, file);
+		fclose(file);
+
+		error = uci2_config_parse(CONFIG_DIRECTORY_PATH_TMP "test_config_syntax", &uci2_ast);
+		if (cases[i].value == NULL) {
+			assert_int_equal(error, UE_PARSER);
+			continue;
+		}
+
+		assert_int_equal(error, UE_NONE);
+
+		error = uci2_node_get(uci2_ast, cases[i].section, cases[i].option, &node);
+		if (cases[i].value == missing) {
+			assert_int_equal(error, UE_NODE_NOT_FOUND);
+			uci2_ast_destroy(&uci2_ast);
+			continue;
+		}
+
+		assert_int_equal(error, UE_NONE);
+
+		error = uci2_node_type_get(node, &node_type);
+		assert_int_equal(error, UE_NONE);
+
+		if (node_type == UNT_OPTION) {
+			error = uci2_node_option_value_get(node, &value);
+		} else {
+			// list: check the first element
+			uci2_node_iterator_t *iterator = NULL;
+
+			error = uci2_node_iterator_new(node, &iterator);
+			assert_int_equal(error, UE_NONE);
+			error = uci2_node_iterator_next(iterator, &node);
+			assert_int_equal(error, UE_NONE);
+			uci2_node_iterator_destroy(&iterator);
+
+			error = uci2_node_list_element_value_get(node, &value);
+		}
+
+		assert_int_equal(error, UE_NONE);
+		assert_string_equal(value, cases[i].value);
+
+		uci2_ast_destroy(&uci2_ast);
+	}
 }

@@ -458,7 +458,7 @@ union yyalloc
 /* YYNNTS -- Number of nonterminals.  */
 #define YYNNTS  8
 /* YYNRULES -- Number of rules.  */
-#define YYNRULES  16
+#define YYNRULES  19
 /* YYNSTATES -- Number of states.  */
 #define YYNSTATES  24
 
@@ -510,8 +510,8 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_uint8 yyrline[] =
 {
-       0,    61,    61,    75,    93,    99,   105,   111,   117,   125,
-     133,   146,   161,   167,   173,   176,   179
+       0,    61,    61,    68,    75,    78,    84,    90,    96,   102,
+     108,   111,   114,   117,   123,   129,   135,   138,   142,   147
 };
 #endif
 
@@ -563,9 +563,9 @@ static const yytype_int8 yypact[] =
    means the default is an error.  */
 static const yytype_int8 yydefact[] =
 {
-       0,     0,     0,     0,     0,     2,     5,     7,     8,     4,
-       1,     3,     6,     9,     0,     0,    10,    12,    11,     0,
-      15,    13,    14,    16
+       5,     0,     0,     0,     4,     2,     7,     9,    10,     6,
+       1,     3,     8,    11,     0,     0,    12,    14,    13,    17,
+      18,    15,    16,    19
 };
 
 /* YYPGOTO[NTERM-NUM].  */
@@ -609,15 +609,15 @@ static const yytype_int8 yystos[] =
 /* YYR1[RULE-NUM] -- Symbol kind of the left-hand side of rule RULE-NUM.  */
 static const yytype_int8 yyr1[] =
 {
-       0,     8,     9,     9,    10,    11,    11,    12,    13,    13,
-      13,    13,    14,    14,    15,    15,    15
+       0,     8,     9,     9,     9,     9,    10,    11,    11,    12,
+      13,    13,    13,    13,    14,    14,    15,    15,    15,    15
 };
 
 /* YYR2[RULE-NUM] -- Number of symbols on the right-hand side of rule RULE-NUM.  */
 static const yytype_int8 yyr2[] =
 {
-       0,     2,     1,     2,     2,     1,     2,     1,     2,     3,
-       3,     4,     1,     2,     3,     2,     3
+       0,     2,     1,     2,     1,     0,     2,     1,     2,     1,
+       2,     3,     3,     4,     1,     2,     3,     2,     2,     3
 };
 
 
@@ -1126,7 +1126,7 @@ YY_INITIAL_VALUE (static YYSTYPE yyval_default;)
 YYSTYPE yylval YY_INITIAL_VALUE (= yyval_default);
 
     /* Number of syntax errors so far.  */
-    int yynerrs = 0;
+    int yynerrs YY_ATTRIBUTE_UNUSED = 0;
 
     yy_state_fast_t yystate = 0;
     /* Number of tokens to shift before error messages enabled.  */
@@ -1382,189 +1382,169 @@ yyreduce:
   case 2: /* root: lines  */
 #line 61 "uci2.y"
              {
-                 (yyval.node) = ast_node_new(ast, ANT_ROOT, xstrdup(AST_NODE_ROOT_NAME), 0);
-                 ast->root = (yyval.node);
-                 // create config node
-                 ast_node_t *node = NULL;
-                 node = ast_node_new(ast, ANT_CONFIG, xstrdup(AST_NODE_CONFIG_NAME), NULL);
-                 ast_node_add((yyval.node), node);
-                 // use children from lines
-                 ast_node_move((yyval.node)->children[0], (yyvsp[0].node));
-                 // merge section type nodes with the same name into a single node
-                 ast_node_merge((yyval.node)->children[0], ANT_SECTION_TYPE);
-                 // set correct names for unnamed section nodes
-                 unnamed_section_name_set((yyval.node)->children[0]);
+                 (yyval.node) = ast_root_new(ast, NULL, (yyvsp[0].node));
+                 if ((yyval.node) == NULL) {
+                     yyerror(scanner, ast, "section redefined with a different type");
+                     YYABORT;
+                 }
              }
-#line 1399 "parser.c"
+#line 1392 "parser.c"
     break;
 
   case 3: /* root: package lines  */
-#line 75 "uci2.y"
-                        {
-                            (yyval.node) = ast_node_new(ast, ANT_ROOT, xstrdup(AST_NODE_ROOT_NAME), 0);
-                            ast->root = (yyval.node);
-                            // package
-                            ast_node_add((yyval.node), (yyvsp[-1].node));
-                            // create config node
-                            ast_node_t *node = NULL;
-                            node = ast_node_new(ast, ANT_CONFIG, xstrdup(AST_NODE_CONFIG_NAME), NULL);
-                            ast_node_add((yyval.node), node);
-                            // use children from lines
-                            ast_node_move((yyval.node)->children[1], (yyvsp[0].node));
-                            // merge section type nodes with the same name into a single node
-                            ast_node_merge((yyval.node)->children[1], ANT_SECTION_TYPE);
-                            // set correct names for unnamed section nodes
-                            unnamed_section_name_set((yyval.node)->children[1]);
-                        }
-#line 1420 "parser.c"
+#line 68 "uci2.y"
+                     {
+                         (yyval.node) = ast_root_new(ast, (yyvsp[-1].node), (yyvsp[0].node));
+                         if ((yyval.node) == NULL) {
+                             yyerror(scanner, ast, "section redefined with a different type");
+                             YYABORT;
+                         }
+                     }
+#line 1404 "parser.c"
     break;
 
-  case 4: /* package: PACKAGE VALUE  */
-#line 93 "uci2.y"
+  case 4: /* root: package  */
+#line 75 "uci2.y"
+               {
+                   (yyval.node) = ast_root_new(ast, (yyvsp[0].node), NULL);
+               }
+#line 1412 "parser.c"
+    break;
+
+  case 5: /* root: %empty  */
+#line 78 "uci2.y"
+              {
+                  // only comments and whitespace
+                  (yyval.node) = ast_root_new(ast, NULL, NULL);
+              }
+#line 1421 "parser.c"
+    break;
+
+  case 6: /* package: PACKAGE VALUE  */
+#line 84 "uci2.y"
                         {
                             (yyval.node) = ast_node_new(ast, ANT_PACKAGE, xstrdup(AST_NODE_PACKAGE_NAME), (yyvsp[0].string));
                         }
-#line 1428 "parser.c"
+#line 1429 "parser.c"
     break;
 
-  case 5: /* lines: line  */
-#line 99 "uci2.y"
+  case 7: /* lines: line  */
+#line 90 "uci2.y"
              {
                  // Use node type ANT_SENTINEL because this node is a temporary node
                  // whose children are going to be added to the node type ANT_CONFIG in the next step.
                  (yyval.node) = ast_node_new(ast, ANT_SENTINEL, NULL, NULL);
                  ast_node_add((yyval.node), (yyvsp[0].node));
              }
-#line 1439 "parser.c"
+#line 1440 "parser.c"
     break;
 
-  case 6: /* lines: lines line  */
-#line 105 "uci2.y"
+  case 8: /* lines: lines line  */
+#line 96 "uci2.y"
                    {
                        ast_node_add((yyvsp[-1].node), (yyvsp[0].node));
                    }
-#line 1447 "parser.c"
+#line 1448 "parser.c"
     break;
 
-  case 7: /* line: config  */
-#line 111 "uci2.y"
+  case 9: /* line: config  */
+#line 102 "uci2.y"
               {
                   (yyval.node) = (yyvsp[0].node);
               }
-#line 1455 "parser.c"
+#line 1456 "parser.c"
     break;
 
-  case 8: /* config: CONFIG VALUE  */
-#line 117 "uci2.y"
+  case 10: /* config: CONFIG VALUE  */
+#line 108 "uci2.y"
                       {
-                          (yyval.node) = ast_node_new(ast, ANT_SECTION_TYPE, (yyvsp[0].string), NULL);
-                          // ** un-named section **
-                          // create new AST for unnamed section
-                          ast_node_t *node = NULL;
-                          node = ast_node_new(ast, ANT_SECTION_NAME, xstrdup(UNNAMED_SECTION_NAME_PLACEHOLDER), NULL);
-                          ast_node_add((yyval.node), node);
+                          (yyval.node) = ast_section_new(ast, (yyvsp[0].string), NULL, NULL);
                       }
-#line 1468 "parser.c"
+#line 1464 "parser.c"
     break;
 
-  case 9: /* config: CONFIG VALUE VALUE  */
-#line 125 "uci2.y"
-                             {
-                                 (yyval.node) = ast_node_new(ast, ANT_SECTION_TYPE, (yyvsp[-1].string), NULL);
-                                 // ** named section **
-                                 // create new AST for named section
-                                 ast_node_t *node = NULL;
-                                 node = ast_node_new(ast, ANT_SECTION_NAME, (yyvsp[0].string), NULL);
-                                 ast_node_add((yyval.node), node);
-                             }
-#line 1481 "parser.c"
+  case 11: /* config: CONFIG VALUE VALUE  */
+#line 111 "uci2.y"
+                            {
+                                (yyval.node) = ast_section_new(ast, (yyvsp[-1].string), (yyvsp[0].string), NULL);
+                            }
+#line 1472 "parser.c"
     break;
 
-  case 10: /* config: CONFIG VALUE options  */
-#line 133 "uci2.y"
-                               {
-                                   (yyval.node) = ast_node_new(ast, ANT_SECTION_TYPE, (yyvsp[-1].string), NULL);
-                                   // ** un-named section **
-                                   // create new AST for unnamed section
-                                   ast_node_t *node = NULL;
-                                   node = ast_node_new(ast, ANT_SECTION_NAME, xstrdup(UNNAMED_SECTION_NAME_PLACEHOLDER), NULL);
-                                   ast_node_add((yyval.node), node);
-                                   // - use children from options
-                                   // - both section and type present
-                                   ast_node_move((yyval.node)->children[0], (yyvsp[0].node));
-                                   // merge list nodes with the same name into a single node
-                                   ast_node_merge((yyval.node)->children[0], ANT_LIST);
+  case 12: /* config: CONFIG VALUE options  */
+#line 114 "uci2.y"
+                              {
+                                  (yyval.node) = ast_section_new(ast, (yyvsp[-1].string), NULL, (yyvsp[0].node));
                               }
-#line 1499 "parser.c"
+#line 1480 "parser.c"
     break;
 
-  case 11: /* config: CONFIG VALUE VALUE options  */
-#line 146 "uci2.y"
+  case 13: /* config: CONFIG VALUE VALUE options  */
+#line 117 "uci2.y"
                                     {
-                                        (yyval.node) = ast_node_new(ast, ANT_SECTION_TYPE, (yyvsp[-2].string), NULL);
-                                        // ** named section **
-                                        // create new AST for section name
-                                        ast_node_t *node = NULL;
-                                        node = ast_node_new(ast, ANT_SECTION_NAME, (yyvsp[-1].string), NULL);
-                                        ast_node_add((yyval.node), node);
-                                        // - use children from options
-                                        // - both section and type present
-                                        ast_node_move((yyval.node)->children[0], (yyvsp[0].node));
-                                        // merge list nodes with the same name into a single node
-                                        ast_node_merge((yyval.node)->children[0], ANT_LIST);
+                                        (yyval.node) = ast_section_new(ast, (yyvsp[-2].string), (yyvsp[-1].string), (yyvsp[0].node));
                                     }
-#line 1517 "parser.c"
+#line 1488 "parser.c"
     break;
 
-  case 12: /* options: option  */
-#line 161 "uci2.y"
+  case 14: /* options: option  */
+#line 123 "uci2.y"
                  {
                      // Use node type ANT_SENTINEL because this node is a temporary node
                      // whose children are going to be added to the node type ANT_SECTION_NAME in the next step.
                      (yyval.node) = ast_node_new(ast, ANT_SENTINEL, NULL, NULL);
                      ast_node_add((yyval.node), (yyvsp[0].node));
                  }
-#line 1528 "parser.c"
+#line 1499 "parser.c"
     break;
 
-  case 13: /* options: options option  */
-#line 167 "uci2.y"
+  case 15: /* options: options option  */
+#line 129 "uci2.y"
                          {
                              ast_node_add((yyvsp[-1].node), (yyvsp[0].node));
                          }
-#line 1536 "parser.c"
+#line 1507 "parser.c"
     break;
 
-  case 14: /* option: OPTION VALUE VALUE  */
-#line 173 "uci2.y"
+  case 16: /* option: OPTION VALUE VALUE  */
+#line 135 "uci2.y"
                             {
                                 (yyval.node) = ast_node_new(ast, ANT_OPTION, (yyvsp[-1].string), (yyvsp[0].string));
                             }
-#line 1544 "parser.c"
+#line 1515 "parser.c"
     break;
 
-  case 15: /* option: LIST VALUE  */
-#line 176 "uci2.y"
-                     {
-                              (yyval.node) = ast_node_new(ast, ANT_LIST, (yyvsp[0].string), NULL);
-                          }
-#line 1552 "parser.c"
+  case 17: /* option: OPTION VALUE  */
+#line 138 "uci2.y"
+                      {
+                          // an option without value removes the option
+                          (yyval.node) = ast_node_new(ast, ANT_OPTION, (yyvsp[0].string), NULL);
+                      }
+#line 1524 "parser.c"
     break;
 
-  case 16: /* option: LIST VALUE VALUE  */
-#line 179 "uci2.y"
+  case 18: /* option: LIST VALUE  */
+#line 142 "uci2.y"
+                    {
+                        // a list without value adds an empty element
+                        (yyval.node) = ast_node_new(ast, ANT_LIST, (yyvsp[0].string), NULL);
+                        ast_node_add((yyval.node), ast_node_new(ast, ANT_LIST_ITEM, xstrdup(""), NULL));
+                    }
+#line 1534 "parser.c"
+    break;
+
+  case 19: /* option: LIST VALUE VALUE  */
+#line 147 "uci2.y"
                           {
                               (yyval.node) = ast_node_new(ast, ANT_LIST, (yyvsp[-1].string), NULL);
                               // add list value as new node
-                              ast_node_t *node = NULL;
-                              node = ast_node_new(ast, ANT_LIST_ITEM, (yyvsp[0].string), NULL);
-                              ast_node_add((yyval.node), node);
+                              ast_node_add((yyval.node), ast_node_new(ast, ANT_LIST_ITEM, (yyvsp[0].string), NULL));
                           }
-#line 1564 "parser.c"
+#line 1544 "parser.c"
     break;
 
 
-#line 1568 "parser.c"
+#line 1548 "parser.c"
 
       default: break;
     }
@@ -1788,5 +1768,5 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 188 "uci2.y"
+#line 154 "uci2.y"
 

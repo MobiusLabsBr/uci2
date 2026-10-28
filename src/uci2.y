@@ -59,35 +59,26 @@
 %%
 // root node
 root : lines {
-                 $$ = ast_node_new(ast, ANT_ROOT, xstrdup(AST_NODE_ROOT_NAME), 0);
-                 ast->root = $$;
-                 // create config node
-                 ast_node_t *node = NULL;
-                 node = ast_node_new(ast, ANT_CONFIG, xstrdup(AST_NODE_CONFIG_NAME), NULL);
-                 ast_node_add($$, node);
-                 // use children from lines
-                 ast_node_move($$->children[0], $1);
-                 // merge section type nodes with the same name into a single node
-                 ast_node_merge($$->children[0], ANT_SECTION_TYPE);
-                 // set correct names for unnamed section nodes
-                 unnamed_section_name_set($$->children[0]);
+                 $$ = ast_root_new(ast, NULL, $1);
+                 if ($$ == NULL) {
+                     yyerror(scanner, ast, "section redefined with a different type");
+                     YYABORT;
+                 }
              }
-        | package lines {
-                            $$ = ast_node_new(ast, ANT_ROOT, xstrdup(AST_NODE_ROOT_NAME), 0);
-                            ast->root = $$;
-                            // package
-                            ast_node_add($$, $1);
-                            // create config node
-                            ast_node_t *node = NULL;
-                            node = ast_node_new(ast, ANT_CONFIG, xstrdup(AST_NODE_CONFIG_NAME), NULL);
-                            ast_node_add($$, node);
-                            // use children from lines
-                            ast_node_move($$->children[1], $2);
-                            // merge section type nodes with the same name into a single node
-                            ast_node_merge($$->children[1], ANT_SECTION_TYPE);
-                            // set correct names for unnamed section nodes
-                            unnamed_section_name_set($$->children[1]);
-                        }
+     | package lines {
+                         $$ = ast_root_new(ast, $1, $2);
+                         if ($$ == NULL) {
+                             yyerror(scanner, ast, "section redefined with a different type");
+                             YYABORT;
+                         }
+                     }
+     | package {
+                   $$ = ast_root_new(ast, $1, NULL);
+               }
+     | %empty {
+                  // only comments and whitespace
+                  $$ = ast_root_new(ast, NULL, NULL);
+              }
      ;
 
 package : PACKAGE VALUE {
@@ -113,49 +104,20 @@ line : config {
               }
      ;
 
-// config line
+// config line, sections with an empty name are unnamed like in libuci
 config : CONFIG VALUE {
-                          $$ = ast_node_new(ast, ANT_SECTION_TYPE, $2, NULL);
-                          // ** un-named section **
-                          // create new AST for unnamed section
-                          ast_node_t *node = NULL;
-                          node = ast_node_new(ast, ANT_SECTION_NAME, xstrdup(UNNAMED_SECTION_NAME_PLACEHOLDER), NULL);
-                          ast_node_add($$, node);
+                          $$ = ast_section_new(ast, $2, NULL, NULL);
                       }
-        | CONFIG VALUE VALUE {
-                                 $$ = ast_node_new(ast, ANT_SECTION_TYPE, $2, NULL);
-                                 // ** named section **
-                                 // create new AST for named section
-                                 ast_node_t *node = NULL;
-                                 node = ast_node_new(ast, ANT_SECTION_NAME, $3, NULL);
-                                 ast_node_add($$, node);
-                             }
-        | CONFIG VALUE options {
-                                   $$ = ast_node_new(ast, ANT_SECTION_TYPE, $2, NULL);
-                                   // ** un-named section **
-                                   // create new AST for unnamed section
-                                   ast_node_t *node = NULL;
-                                   node = ast_node_new(ast, ANT_SECTION_NAME, xstrdup(UNNAMED_SECTION_NAME_PLACEHOLDER), NULL);
-                                   ast_node_add($$, node);
-                                   // - use children from options
-                                   // - both section and type present
-                                   ast_node_move($$->children[0], $3);
-                                   // merge list nodes with the same name into a single node
-                                   ast_node_merge($$->children[0], ANT_LIST);
+       | CONFIG VALUE VALUE {
+                                $$ = ast_section_new(ast, $2, $3, NULL);
+                            }
+       | CONFIG VALUE options {
+                                  $$ = ast_section_new(ast, $2, NULL, $3);
                               }
        | CONFIG VALUE VALUE options {
-                                        $$ = ast_node_new(ast, ANT_SECTION_TYPE, $2, NULL);
-                                        // ** named section **
-                                        // create new AST for section name
-                                        ast_node_t *node = NULL;
-                                        node = ast_node_new(ast, ANT_SECTION_NAME, $3, NULL);
-                                        ast_node_add($$, node);
-                                        // - use children from options
-                                        // - both section and type present
-                                        ast_node_move($$->children[0], $4);
-                                        // merge list nodes with the same name into a single node
-                                        ast_node_merge($$->children[0], ANT_LIST);
-                                    };
+                                        $$ = ast_section_new(ast, $2, $3, $4);
+                                    }
+       ;
 
 // options, recursive
 options : option {
@@ -169,19 +131,23 @@ options : option {
                          }
         ;
 
-// option or list
+// option or list, duplicates are resolved by ast_root_new() like libuci does
 option : OPTION VALUE VALUE {
                                 $$ = ast_node_new(ast, ANT_OPTION, $2, $3);
                             }
-        | LIST VALUE {
-                              $$ = ast_node_new(ast, ANT_LIST, $2, NULL);
-                          }
+       | OPTION VALUE {
+                          // an option without value removes the option
+                          $$ = ast_node_new(ast, ANT_OPTION, $2, NULL);
+                      }
+       | LIST VALUE {
+                        // a list without value adds an empty element
+                        $$ = ast_node_new(ast, ANT_LIST, $2, NULL);
+                        ast_node_add($$, ast_node_new(ast, ANT_LIST_ITEM, xstrdup(""), NULL));
+                    }
        | LIST VALUE VALUE {
                               $$ = ast_node_new(ast, ANT_LIST, $2, NULL);
                               // add list value as new node
-                              ast_node_t *node = NULL;
-                              node = ast_node_new(ast, ANT_LIST_ITEM, $3, NULL);
-                              ast_node_add($$, node);
+                              ast_node_add($$, ast_node_new(ast, ANT_LIST_ITEM, $3, NULL));
                           }
        ;
 

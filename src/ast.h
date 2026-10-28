@@ -7,6 +7,7 @@
 #define AST_H
 
 #include <stddef.h>
+#include <stdbool.h>
 
 #define AST_NODE_ROOT_NAME "/"
 #define AST_NODE_CONFIG_NAME "@C"
@@ -41,15 +42,22 @@ struct ast_node_s {
 	ast_node_t **children;
 	size_t children_number;
 	size_t unnamed_children_number;
+	bool reachable; // only used by ast_compact()
 };
 
 void ast_init(ast_t *ast);
 ast_node_t *ast_node_new(ast_t *ast, enum ast_node_type type, char *name, char *value);
 void ast_node_add(ast_node_t *parent, ast_node_t *node);
 void ast_destroy(ast_t *ast);
+void ast_compact(ast_t *ast);
+void ast_node_detach(ast_node_t *node);
+ast_node_t *ast_node_pool_get(ast_node_t *node);
 
 void ast_node_move(ast_node_t *destination, ast_node_t *source);
 void ast_node_merge(ast_node_t *node, enum ast_node_type type);
 void unnamed_section_name_set(ast_node_t *config_node);
+
+ast_node_t *ast_section_new(ast_t *ast, char *type, char *name, ast_node_t *options);
+ast_node_t *ast_root_new(ast_t *ast, ast_node_t *package, ast_node_t *lines);
 
 #endif /* ifndef AST_H */
